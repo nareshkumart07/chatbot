@@ -77,38 +77,47 @@ def setup_rag_pipeline(text_content):
     st.session_state.chunks = chunks
     st.session_state.faiss_index = index
 
-def ask_query(query, mode, model_type, api_key):
+def ask_query(query, model_type, api_key, chat_history):
     """
-    Handles the logic for both chat modes (Document RAG and General Chat).
-    Returns the response and the context used (if any).
+    Performs RAG to answer a query, now including conversation history for context.
+    Returns the response and the document context used.
     """
-    context_text = None # Initialize context as None
-    
-    if mode == "Chat with Document":
-        if 'faiss_index' not in st.session_state:
-            return "Please upload a document to use this mode.", None
+    if 'faiss_index' not in st.session_state:
+        return "Please upload and process a file first.", None
 
-        # RAG Pipeline: Retrieve relevant chunks
-        query_emb = encoder_model.encode([query])
-        _, I = st.session_state.faiss_index.search(np.array(query_emb), k=3)
-        relevant_chunks = [st.session_state.chunks[i] for i in I[0]]
-        context_text = "\n\n---\n\n".join(relevant_chunks)
-        
-        prompt = f"""
-You are a helpful assistant. Use ONLY the following context to answer the user's question. If the answer is not found in the context, say that you don't know.
+    # RAG: Find relevant document chunks based on the latest query
+    query_emb = encoder_model.encode([query])
+    _, I = st.session_state.faiss_index.search(np.array(query_emb), k=3)
+    relevant_chunks = [st.session_state.chunks[i] for i in I[0]]
+    doc_context = "\n\n---\n\n".join(relevant_chunks)
 
-Context:
+    # --- MEMORY IMPLEMENTATION ---
+    # Format the last few messages from chat history to provide conversation context.
+    # We take the last 4 messages (2 user, 2 assistant) to keep the prompt concise.
+    history_str = ""
+    recent_history = chat_history[-4:]
+    if recent_history:
+        history_str += "Here is the recent conversation history:\n"
+        for msg in recent_history:
+            history_str += f"{msg['role'].capitalize()}: {msg['content']}\n"
+    # --- END MEMORY IMPLEMENTATION ---
+
+    # Construct the final prompt with both conversation and document context
+    prompt = f"""
+You are a helpful AI assistant. Answer the user's latest question based on the conversation history and the provided document context.
+
+{history_str}
+
+Use the following context from the document if it's relevant. If the answer isn't in the document or history, say you don't know.
+
+Document Context:
 ---
-{context_text}
+{doc_context}
 ---
 
-User Question: {query}
+User's Latest Question: {query}
 Answer:
 """
-    else: # General Chat mode
-        prompt = query # For general chat, the prompt is just the user's query
-
-    # Generate response from the selected model
     try:
         if model_type == 'Fast Model (Gemini)':
             if not api_key:
@@ -116,15 +125,16 @@ Answer:
             genai.configure(api_key=api_key)
             gen_model = genai.GenerativeModel("gemini-2.0-flash")
             response = gen_model.generate_content(prompt)
-            return response.text, context_text
+            return response.text, doc_context
         else: # Normal Model (Local)
             response = llm_model.generate(prompt, max_tokens=512)
-            return response, context_text
+            return response, doc_context
     except Exception as e:
         return f"An error occurred: {str(e)}", None
 
+
 # --- Streamlit App UI ---
-st.set_page_config(page_title="Chatbot", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Chat with your Data", page_icon="💬", layout="wide")
 
 st.markdown("""
 <style>
@@ -136,44 +146,66 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize session state
-if 'chat_history' not in st.session_state: st.session_state.chat_history = []
-if 'all_chats' not in st.session_state: st.session_state.all_chats = []
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'all_chats' not in st.session_state:
+    st.session_state.all_chats = []
+
 
 # --- Sidebar Controls ---
 with st.sidebar:
-    st.title("⚙️ Controls")
+    st.title("📄 Chat Controls")
+    
+    uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"])
+    
+    st.info("Note: The chatbot's knowledge is limited to the content of the uploaded document.", icon="💡")
 
-    chat_mode = st.radio("Choose Chat Mode:", ("Chat with Document", "General Chat"))
-
-    if chat_mode == "Chat with Document":
-        st.info("Upload a document to ask questions about its content.")
-        uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"])
-        
-        if uploaded_file:
-            if "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
-                with st.spinner('Reading and indexing file...'):
-                    file_content = get_file_content(uploaded_file)
-                    if file_content:
-                        setup_rag_pipeline(file_content)
-                        st.session_state.processed_file = uploaded_file.name
-                        st.success("File processed successfully!")
-                    else:
-                        st.error("Failed to read or process the file.")
-    else:
-        st.info("Ask any general question. The bot will not use a document.")
+    if uploaded_file:
+        if "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
+            with st.spinner('Reading and indexing file...'):
+                file_content = get_file_content(uploaded_file)
+                if file_content:
+                    setup_rag_pipeline(file_content)
+                    st.session_state.processed_file = uploaded_file.name
+                    st.success("File processed successfully!")
+                else:
+                    st.error("Failed to read or process the file.")
 
     model_choice = st.selectbox("Choose a model:", ('Normal Model (Local)', 'Fast Model (Gemini)'))
-    api_key = st.text_input("Enter Google AI API Key", type="password") if model_choice == 'Fast Model (Gemini)' else ""
     
+    api_key = ""
+    if model_choice == 'Fast Model (Gemini)':
+        api_key = st.text_input("Enter Google AI API Key", type="password")
+        st.markdown("For using the faster model you need to paste your Gemini API key here.")
+
     st.markdown("---")
-    if st.button("New Chat"):
-        st.session_state.chat_history = []
-        st.rerun()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("New Chat", use_container_width=True):
+            if st.session_state.chat_history:
+                st.session_state.all_chats.append(st.session_state.chat_history)
+            st.session_state.chat_history = []
+            st.rerun()
+
+    with col2:
+        if st.button("Clear Chat", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+            
+    if st.session_state.all_chats:
+        st.markdown("---")
+        st.subheader("Chat History")
+        for i, chat in enumerate(st.session_state.all_chats):
+            preview = chat[0]['content'] if chat and chat[0]['role'] == 'user' else "Empty Chat"
+            if st.button(f"Chat {i+1}: {preview[:30]}...", key=f"history_{i}"):
+                st.session_state.chat_history = chat
+
 
 # --- Main Chat Interface ---
 st.title("💬 Chatbot")
 
-# Display chat history
+# Display current chat messages
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -181,27 +213,31 @@ for message in st.session_state.chat_history:
             with st.expander("Show Sources"):
                 st.markdown(f"> {message['context'].replace('---', '---')}")
 
-# Chat input
-if user_query := st.chat_input("Ask a question..."):
-    # Enforce document upload for "Chat with Document" mode
-    if chat_mode == "Chat with Document" and "faiss_index" not in st.session_state:
-        st.warning("Please upload a document before asking questions in this mode.")
+# User input
+if user_query := st.chat_input("Ask a question about your document..."):
+    if not uploaded_file:
+        st.warning("Please upload a document before asking questions.")
     else:
+        # Append user message to history immediately for a fluid UI
         st.session_state.chat_history.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
+        # Get the assistant's response
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response, context = ask_query(user_query, chat_mode, model_choice, api_key)
+                # Pass the current chat history to the model
+                response, context = ask_query(
+                    user_query, model_choice, api_key, st.session_state.chat_history
+                )
                 st.markdown(response)
                 if context:
                     with st.expander("Show Sources"):
-                        st.markdown(f"> {context.replace('---', '---')}")
-
+                         st.markdown(f"> {context.replace('---', '---')}")
+                
+                # Append the full assistant message with context to history
                 st.session_state.chat_history.append({
                     "role": "assistant", 
                     "content": response, 
                     "context": context
                 })
-

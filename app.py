@@ -135,17 +135,17 @@ Answer:
 
 st.set_page_config(page_title="Chat with your Data", page_icon="💬", layout="wide")
 
-# Custom CSS for the blue and white theme
+# Custom CSS for Google's color theme
 st.markdown("""
 <style>
     .stApp {
-        background-color: #F0F8FF;
+        background-color: #FFFFFF;
     }
     .stButton>button {
-        background-color: #4F8BF9; color: white; border-radius: 20px; border: 1px solid #4F8BF9;
+        background-color: #4285F4; color: white; border-radius: 20px; border: 1px solid #4285F4;
     }
     .stButton>button:hover {
-        background-color: #FFFFFF; color: #4F8BF9; border: 1px solid #4F8BF9;
+        background-color: #FFFFFF; color: #4285F4; border: 1px solid #4285F4;
     }
 </style>
 """, unsafe_allow_html=True)

@@ -93,16 +93,17 @@ def setup_rag_pipeline(text_content):
 def ask_query(query, model_type, api_key):
     """
     Performs RAG to answer a query.
+    Returns the response and the context used.
     """
     if 'faiss_index' not in st.session_state or 'chunks' not in st.session_state:
-        return "Please upload and process a data file first."
+        return "Please upload and process a data file first.", None
 
     # 1. Retrieve relevant chunks
     query_emb = encoder_model.encode([query])
     k = 3  # number of relevant chunks
     _, I = st.session_state.faiss_index.search(np.array(query_emb), k)
     relevant_chunks = [st.session_state.chunks[i] for i in I[0]]
-    context_text = "\n\n".join(relevant_chunks)
+    context_text = "\n\n---\n\n".join(relevant_chunks)
 
     # 2. Create the prompt
     prompt = f"""
@@ -120,16 +121,16 @@ Answer:
     try:
         if model_type == 'Fast Model (Gemini)':
             if not api_key:
-                return "Error: Please enter your Google AI API key in the sidebar to use the Fast Model."
+                return "Error: Please enter your Google AI API key in the sidebar to use the Fast Model.", None
             genai.configure(api_key=api_key)
             gen_model = genai.GenerativeModel("gemini-2.0-flash")
             response = gen_model.generate_content(prompt)
-            return response.text
+            return response.text, context_text
         else: # Normal Model (Local)
             response = llm_model.generate(prompt, max_tokens=512)
-            return response
+            return response, context_text
     except Exception as e:
-        return f"An error occurred: {str(e)}"
+        return f"An error occurred: {str(e)}", None
 
 # --- Streamlit App UI ---
 
@@ -146,6 +147,13 @@ st.markdown("""
     }
     .stButton>button:hover {
         background-color: #FFFFFF; color: #4285F4; border: 1px solid #4285F4;
+    }
+    blockquote {
+        background-color: #F1F3F4;
+        border-left: 5px solid #4285F4;
+        padding: 10px;
+        margin: 10px 0px;
+        border-radius: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -227,6 +235,11 @@ st.title("💬 Chatbot")
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # Display source context if it exists for assistant messages
+        if message["role"] == "assistant" and "context" in message and message["context"]:
+            with st.expander("Show Sources"):
+                st.markdown(f"> {message['context'].replace('---', '---')}")
+
 
 # Chat input
 if user_query := st.chat_input("Ask a question about your document..."):
@@ -239,7 +252,13 @@ if user_query := st.chat_input("Ask a question about your document..."):
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response = ask_query(user_query, model_choice, api_key)
+                response, context = ask_query(user_query, model_choice, api_key)
                 st.markdown(response)
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
+                # Display the sources for the new response immediately
+                if context:
+                    with st.expander("Show Sources"):
+                        st.markdown(f"> {context.replace('---', '---')}")
+
+                # Add the response and context to the chat history
+                st.session_state.chat_history.append({"role": "assistant", "content": response, "context": context})
 

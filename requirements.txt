@@ -2,8 +2,9 @@ streamlit
 python-docx
 pandas
 PyPDF2
+numpy
+faiss-cpu
 gpt4all
 sentence-transformers
-faiss-cpu
-numpy
 google-generativeai
+mysql-connector-python

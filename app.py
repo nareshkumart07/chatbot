@@ -11,6 +11,7 @@ from gpt4all import GPT4All
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 
+
 # --- Model and Encoder Loading (Cached for performance) ---
 
 @st.cache_resource

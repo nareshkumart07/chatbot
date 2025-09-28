@@ -2,3 +2,8 @@ streamlit
 python-docx
 pandas
 PyPDF2
+gpt4all
+sentence-transformers
+faiss-cpu
+numpy
+google-generativeai

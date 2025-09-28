@@ -7,4 +7,4 @@ faiss-cpu
 gpt4all
 sentence-transformers
 google-generativeai
-mysql-connector-python
+

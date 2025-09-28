@@ -161,6 +161,7 @@ if 'all_chats' not in st.session_state:
 with st.sidebar:
     st.title("📄 Chat with your Data")
     st.markdown("Upload a document and ask questions about its content.")
+    st.info("🧠 **Note:** This chatbot's knowledge is strictly limited to the content of the document you upload.")
 
     uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"], key="file_uploader")
     

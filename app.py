@@ -165,17 +165,18 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"], key="file_uploader")
     
-    # Corrected condition to prevent AttributeError
-    if uploaded_file and ("processed_file" not in st.session_state or st.session_state.get("processed_file") != uploaded_file.name):
-        with st.spinner('Reading and indexing file... This may take a moment.'):
-            file_content = get_file_content(uploaded_file)
-            if file_content:
-                setup_rag_pipeline(file_content)
-                st.session_state.processed_file = uploaded_file.name
-                st.success("File processed successfully!")
-            else:
-                st.error("Failed to read or process the file.")
-
+    # Corrected logic to prevent AttributeError on first run
+    if uploaded_file:
+        # Check if it's a new file that needs processing
+        if "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
+            with st.spinner('Reading and indexing file... This may take a moment.'):
+                file_content = get_file_content(uploaded_file)
+                if file_content:
+                    setup_rag_pipeline(file_content)
+                    st.session_state.processed_file = uploaded_file.name
+                    st.success("File processed successfully!")
+                else:
+                    st.error("Failed to read or process the file.")
 
     model_choice = st.selectbox("Choose a model:", ('Normal Model (Local)', 'Fast Model (Gemini)'))
     

@@ -11,7 +11,6 @@ from gpt4all import GPT4All
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 
-
 # --- Model and Encoder Loading (Cached for performance) ---
 
 @st.cache_resource
@@ -166,7 +165,8 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"], key="file_uploader")
     
-    if uploaded_file and "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
+    # Corrected condition to prevent AttributeError
+    if uploaded_file and ("processed_file" not in st.session_state or st.session_state.get("processed_file") != uploaded_file.name):
         with st.spinner('Reading and indexing file... This may take a moment.'):
             file_content = get_file_content(uploaded_file)
             if file_content:

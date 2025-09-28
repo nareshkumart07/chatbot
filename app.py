@@ -102,102 +102,54 @@ Answer:
         return f"Error generating response: {e}"
 
 
-# ------------------ Streamlit UI ------------------ #
-st.set_page_config(page_title="Chat with your Data", page_icon="💬", layout="wide")
-st.markdown("""
-<style>
-.stApp {background-color: #F0F8FF;}
-.stButton>button {
-    background-color: #4F8BF9; color: white; border-radius: 20px; border: 1px solid #4F8BF9;
-}
-.stButton>button:hover {
-    background-color: #FFFFFF; color: #4F8BF9; border: 1px solid #4F8BF9;
-}
-</style>
-""", unsafe_allow_html=True)
+import streamlit as st
 
-# Initialise session state
-for key, val in [
-    ("chat_history", []),
-    ("last_fast_model_time", 0),
-    ("fast_model_count", 0),
-]:
-    if key not in st.session_state:
-        st.session_state[key] = val
+st.set_page_config(page_title="RAG Chatbot", layout="wide")
+st.title("RAG-Based Chatbot")
 
+# --- 1️⃣  Safely initialize session keys ---
+if "processed_file" not in st.session_state:
+    st.session_state["processed_file"] = None
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
 
-# ------------------ Sidebar ------------------ #
-with st.sidebar:
-    st.title("📄 Chat with your Data")
-    uploaded_file = st.file_uploader(
-        "Upload file", type=["docx", "pdf", "csv", "txt"], key="file_uploader"
-    )
+# --- 2️⃣  File uploader ---
+uploaded_file = st.file_uploader(
+    "Upload your document",
+    type=["pdf", "docx", "txt", "csv"]
+)
 
-    # ✅ Safe check for processed_file
-    if uploaded_file and st.session_state.get("processed_file") != uploaded_file.name:
-        with st.spinner("Reading and indexing file..."):
-            text_content = get_file_content(uploaded_file)
-            if text_content:
-                setup_rag_pipeline(text_content)
-                st.session_state.processed_file = uploaded_file.name
-                st.success("File processed successfully!")
-            else:
-                st.error("Failed to read or process the file.")
-
-    model_choice = st.selectbox(
-        "Choose a model:", ("Normal Model (Local)", "Fast Model (Gemini)")
-    )
-    api_key = (
-        st.text_input("Google AI API Key", type="password")
-        if model_choice == "Fast Model (Gemini)"
-        else ""
-    )
-
-    st.markdown("""
----
-**Model Info**
-- **Normal Model:** Runs locally (private, slower).
-- **Fast Model:** Uses Gemini API (faster, needs API key, 2 Qs/min).
-""")
-
-
-# ------------------ Main Chat ------------------ #
-st.title("💬 Chatbot")
-
-# Display chat history
-for msg in st.session_state.chat_history:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-# Chat input
-if user_query := st.chat_input("Ask a question about your document..."):
-    if "faiss_index" not in st.session_state:
-        st.warning("Please upload a document before asking questions.")
+# --- 3️⃣  Process new file only if changed ---
+if uploaded_file:
+    # Compare safely with stored name
+    if st.session_state.get("processed_file") != uploaded_file.name:
+        with st.spinner("Processing file..."):
+            # ↓↓↓ Replace this with your own document ingestion logic ↓↓↓
+            file_content = uploaded_file.read().decode(errors="ignore")
+            # (e.g., create embeddings, build vector store, etc.)
+            # ↑↑↑ End of your processing logic ↑↑↑
+        st.session_state["processed_file"] = uploaded_file.name
+        st.success(f"✅ File '{uploaded_file.name}' processed successfully!")
     else:
-        st.session_state.chat_history.append({"role": "user", "content": user_query})
-        with st.chat_message("user"):
-            st.markdown(user_query)
+        st.info("This file is already processed.")
 
-        # Rate limit for fast model
-        blocked = False
-        if model_choice == "Fast Model (Gemini)":
-            now = time.time()
-            if now - st.session_state.last_fast_model_time < 60:
-                if st.session_state.fast_model_count >= 2:
-                    wait = 60 - (now - st.session_state.last_fast_model_time)
-                    st.warning(f"Fast model limit reached. Wait {int(wait)} seconds.")
-                    blocked = True
-                else:
-                    st.session_state.fast_model_count += 1
-            else:
-                st.session_state.last_fast_model_time = now
-                st.session_state.fast_model_count = 1
+# --- 4️⃣  Chat interface ---
+user_query = st.text_input("Ask a question about your document:")
 
-        if not blocked:
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    answer = ask_query(user_query, model_choice, api_key)
-                    st.markdown(answer)
-                    st.session_state.chat_history.append(
-                        {"role": "assistant", "content": answer}
-                    )
+if st.button("Send") and user_query:
+    with st.spinner("Generating answer..."):
+        # ↓↓↓ Replace this with your Gemini/GPT4All RAG logic ↓↓↓
+        answer = f"Dummy answer to: {user_query}"
+        # ↑↑↑ End of your RAG logic ↑↑↑
+    st.session_state.chat_history.append((user_query, answer))
+
+# --- 5️⃣  Display chat history ---
+if st.session_state.chat_history:
+    st.subheader("Chat History")
+    for q, a in st.session_state.chat_history:
+        st.markdown(f"**You:** {q}")
+        st.markdown(f"**Bot:** {a}")
+        st.markdown("---")
+
+
+

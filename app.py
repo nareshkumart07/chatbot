@@ -123,7 +123,7 @@ Answer:
             if not api_key:
                 return "Error: Please enter your Google AI API key in the sidebar to use the Fast Model."
             genai.configure(api_key=api_key)
-            gen_model = genai.GenerativeModel("gemini-1.5-flash-latest")
+            gen_model = genai.GenerativeModel("gemini-2.0-flash")
             response = gen_model.generate_content(prompt)
             return response.text
         else: # Normal Model (Local)

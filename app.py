@@ -10,13 +10,13 @@ import faiss
 from gpt4all import GPT4All
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
-import mysql.connector
 
 # --- Model and Encoder Loading (Cached for performance) ---
 
 @st.cache_resource
 def load_llm_model():
     """Loads the local GPT4All model."""
+    # This will download the model on the first run if not already present
     return GPT4All("orca-mini-3b-gguf2-q4_0.gguf")
 
 @st.cache_resource
@@ -28,27 +28,41 @@ llm_model = load_llm_model()
 encoder_model = load_encoder_model()
 
 
-# --- Database Connection ---
+# --- File Reading and Processing ---
 
-# Establish connection to MySQL.
-# Uses st.cache_resource to only run once.
-@st.cache_resource
-def init_connection():
-    try:
-        return mysql.connector.connect(**st.secrets["mysql"])
-    except mysql.connector.Error as err:
-        st.error(f"Error connecting to MySQL: {err}")
-        return None
+def read_docx(file):
+    doc = Document(file)
+    return "\n".join([para.text for para in doc.paragraphs])
 
-# Perform query.
-# Uses st.cache_data to only rerun when the query changes or after 10 min.
-@st.cache_data(ttl=600)
-def run_query(query):
-    conn = init_connection()
-    if conn:
-        with conn.cursor() as cur:
-            cur.execute(query)
-            return cur.fetchall()
+def read_pdf(file):
+    pdf_reader = PyPDF2.PdfReader(file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text() or ""
+    return text
+
+def read_csv(file):
+    return pd.read_csv(file).to_string()
+
+def read_txt(file):
+    stringio = StringIO(file.getvalue().decode("utf-8"))
+    return stringio.read()
+
+def get_file_content(uploaded_file):
+    """Reads the content of the uploaded file based on its extension."""
+    if uploaded_file is not None:
+        file_extension = os.path.splitext(uploaded_file.name)[1].lower()
+        if file_extension == ".docx":
+            return read_docx(uploaded_file)
+        elif file_extension == ".pdf":
+            return read_pdf(uploaded_file)
+        elif file_extension == ".csv":
+            return read_csv(uploaded_file)
+        elif file_extension == ".txt":
+            return read_txt(uploaded_file)
+        else:
+            st.error("Unsupported file format. Please upload a .docx, .pdf, .csv, or .txt file.")
+            return None
     return None
 
 # --- RAG Pipeline Functions ---
@@ -64,8 +78,8 @@ def setup_rag_pipeline(text_content):
     """Creates embeddings and a FAISS index for the document."""
     chunks = chunk_text(text_content)
     if not chunks:
-        st.warning("Could not extract text from the database.")
-        return
+        st.warning("Could not extract text from the document.")
+        return None, None
         
     embeddings = encoder_model.encode(chunks)
     dimension = embeddings.shape[1]
@@ -74,16 +88,14 @@ def setup_rag_pipeline(text_content):
     
     st.session_state.chunks = chunks
     st.session_state.faiss_index = index
-    st.session_state.processed_db = True
-    st.success("Database content processed successfully!")
-
+    return chunks, index
 
 def ask_query(query, model_type, api_key):
     """
     Performs RAG to answer a query.
     """
     if 'faiss_index' not in st.session_state or 'chunks' not in st.session_state:
-        return "Please connect to the database and process the data first."
+        return "Please upload and process a data file first."
 
     # 1. Retrieve relevant chunks
     query_emb = encoder_model.encode([query])
@@ -123,44 +135,45 @@ Answer:
 
 st.set_page_config(page_title="Chat with your Data", page_icon="💬", layout="wide")
 
+# Custom CSS for the blue and white theme
 st.markdown("""
 <style>
-    .stApp { background-color: #F0F8FF; }
-    .stButton>button { background-color: #4F8BF9; color: white; border-radius: 20px; border: 1px solid #4F8BF9; }
-    .stButton>button:hover { background-color: #FFFFFF; color: #4F8BF9; border: 1px solid #4F8BF9; }
+    .stApp {
+        background-color: #F0F8FF;
+    }
+    .stButton>button {
+        background-color: #4F8BF9; color: white; border-radius: 20px; border: 1px solid #4F8BF9;
+    }
+    .stButton>button:hover {
+        background-color: #FFFFFF; color: #4F8BF9; border: 1px solid #4F8BF9;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # Initialize session state
-if 'chat_history' not in st.session_state: st.session_state.chat_history = []
-if 'all_chats' not in st.session_state: st.session_state.all_chats = []
-if 'processed_db' not in st.session_state: st.session_state.processed_db = False
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'all_chats' not in st.session_state:
+    st.session_state.all_chats = []
 
 
 # --- Sidebar Controls ---
 with st.sidebar:
     st.title("📄 Chat with your Data")
-    st.markdown("Connect to your MySQL database to ask questions.")
+    st.markdown("Upload a document and ask questions about its content.")
 
-    table_name = st.text_input("Enter the table name to chat with:")
-
-    if st.button("Connect and Process Data"):
-        if table_name:
-            with st.spinner("Connecting to database and fetching data..."):
-                try:
-                    # Fetch data from the specified table
-                    rows = run_query(f"SELECT * FROM {table_name};")
-                    if rows:
-                        # Convert fetched data to a string format for the RAG pipeline
-                        db_content = pd.DataFrame(rows).to_string()
-                        setup_rag_pipeline(db_content)
-                    else:
-                        st.warning("No data found in the specified table.")
-                except Exception as e:
-                    st.error(f"Failed to process database table: {e}")
-        else:
-            st.warning("Please enter a table name.")
-
+    uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"], key="file_uploader")
+    
+    if uploaded_file:
+        if "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
+            with st.spinner('Reading and indexing file... This may take a moment.'):
+                file_content = get_file_content(uploaded_file)
+                if file_content:
+                    setup_rag_pipeline(file_content)
+                    st.session_state.processed_file = uploaded_file.name
+                    st.success("File processed successfully!")
+                else:
+                    st.error("Failed to read or process the file.")
 
     model_choice = st.selectbox("Choose a model:", ('Normal Model (Local)', 'Fast Model (Gemini)'))
     
@@ -176,7 +189,10 @@ with st.sidebar:
             if st.session_state.chat_history:
                 first_q = st.session_state.chat_history[0]['content']
                 chat_title = (first_q[:30] + '...') if len(first_q) > 30 else first_q
-                st.session_state.all_chats.append({"title": chat_title, "messages": st.session_state.chat_history})
+                st.session_state.all_chats.append({
+                    "title": chat_title,
+                    "messages": st.session_state.chat_history
+                })
             st.session_state.chat_history = []
             st.rerun()
 
@@ -198,8 +214,8 @@ with st.sidebar:
     st.markdown("""
     ---
     **Model Information:**
-    - **Normal Model:** Runs locally. Slower, but private.
-    - **Fast Model:** Uses Gemini API. Faster, requires API key.
+    - **Normal Model:** Runs locally on your computer. Slower, but private and no limits.
+    - **Fast Model:** Uses Google's Gemini API. Faster, but requires an API key.
     """)
 
 
@@ -212,9 +228,9 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 # Chat input
-if user_query := st.chat_input("Ask a question about your database..."):
-    if not st.session_state.processed_db:
-        st.warning("Please connect to the database before asking questions.")
+if user_query := st.chat_input("Ask a question about your document..."):
+    if "faiss_index" not in st.session_state:
+        st.warning("Please upload a document before asking questions.")
     else:
         st.session_state.chat_history.append({"role": "user", "content": user_query})
         with st.chat_message("user"):

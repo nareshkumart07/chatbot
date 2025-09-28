@@ -15,8 +15,16 @@ import google.generativeai as genai
 
 @st.cache_resource
 def load_llm_model():
-    """Loads the local GPT4All model."""
-    return GPT4All("orca-mini-3b-gguf2-q4_0.gguf")
+    """
+    Loads the local GPT4All model.
+    To make this faster, you can choose a smaller model. The trade-off is that
+    smaller models are faster but may be less accurate or capable.
+
+    The original model was "orca-mini-3b-gguf2-q4_0.gguf" (a 3 Billion parameter model).
+    The model below, TinyLlama, is much smaller (1.1 Billion parameters) and will run faster on most CPUs.
+    You can find other models on the GPT4All website.
+    """
+    return GPT4All("TinyLlama-1.1B-Chat-v1.0.Q4_0.gguf")
 
 @st.cache_resource
 def load_encoder_model():

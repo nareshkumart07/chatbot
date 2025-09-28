@@ -153,6 +153,9 @@ st.markdown("""
 # Initialize session state
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'all_chats' not in st.session_state:
+    st.session_state.all_chats = []
+
 
 # --- Sidebar Controls ---
 with st.sidebar:
@@ -161,9 +164,7 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"], key="file_uploader")
     
-    # Corrected logic to prevent AttributeError on first run
     if uploaded_file:
-        # Check if it's a new file that needs processing
         if "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
             with st.spinner('Reading and indexing file... This may take a moment.'):
                 file_content = get_file_content(uploaded_file)
@@ -180,6 +181,35 @@ with st.sidebar:
     if model_choice == 'Fast Model (Gemini)':
         st.markdown("For using faster model you need to paste gemini api key here.")
         api_key = st.text_input("Enter your Google AI API Key", type="password")
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("New Chat", use_container_width=True):
+            if st.session_state.chat_history:
+                first_q = st.session_state.chat_history[0]['content']
+                chat_title = (first_q[:30] + '...') if len(first_q) > 30 else first_q
+                st.session_state.all_chats.append({
+                    "title": chat_title,
+                    "messages": st.session_state.chat_history
+                })
+            st.session_state.chat_history = []
+            st.rerun()
+
+    with col2:
+        if st.button("Clear Chat", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("### Chat History")
+    if not st.session_state.all_chats:
+        st.write("No past chats saved.")
+    else:
+        for i, saved_chat in enumerate(st.session_state.all_chats):
+            if st.button(saved_chat['title'], key=f"history_chat_{i}"):
+                st.session_state.chat_history = saved_chat['messages']
+                st.rerun()
 
     st.markdown("""
     ---

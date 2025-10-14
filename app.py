@@ -13,7 +13,6 @@ import google.generativeai as genai
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
-
 # --- Model and Encoder Loading (Cached for performance) ---
 
 @st.cache_resource
@@ -31,18 +30,14 @@ def load_advanced_llm_model():
     """Loads the 'Advanced' quantized DeepSeek model from Hugging Face."""
     model_name = "deepseek-ai/DeepSeek-R1-0528"
     
-    # Configure 4-bit quantization
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16
-    )
-
+    # Directly pass quantization parameters to the from_pretrained method.
+    # This is a more robust way to load quantized models and avoids config conflicts that cause the ValueError.
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        quantization_config=bnb_config,
-        device_map="auto",
-        torch_dtype=torch.float16 # Ensure compatibility
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        device_map="auto"
     )
     return model, tokenizer
 

@@ -27,16 +27,21 @@ def load_encoder_model():
 
 @st.cache_resource
 def load_advanced_llm_model():
-    """Loads the 'Advanced' quantized DeepSeek model from Hugging Face."""
-    model_name = "deepseek-ai/DeepSeek-R1-0528"
+    """Loads the 'Advanced' quantized Mistral model from Hugging Face."""
+    # Using a model known to be compatible with 4-bit quantization to resolve the config conflict.
+    model_name = "mistralai/Mistral-7B-Instruct-v0.2"
     
-    # Directly pass quantization parameters to the from_pretrained method.
-    # This is a more robust way to load quantized models and avoids config conflicts that cause the ValueError.
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+    )
+
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
+        quantization_config=bnb_config,
         device_map="auto"
     )
     return model, tokenizer
@@ -141,7 +146,7 @@ Answer:
             response = gen_model.generate_content(prompt)
             return response.text, doc_context
             
-        elif model_type == 'Advanced Model (DeepSeek)':
+        elif model_type == 'Advanced Model (Mistral)':
             inputs = advanced_tokenizer(prompt, return_tensors="pt").to(advanced_model.device)
             outputs = advanced_model.generate(**inputs, max_new_tokens=512, do_sample=True, temperature=0.7)
             response_text = advanced_tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -194,7 +199,7 @@ with st.sidebar:
 
     model_choice = st.selectbox(
         "Choose a model:",
-        ('Normal Model (Local)', 'Advanced Model (DeepSeek)', 'Fast Model (Gemini)')
+        ('Normal Model (Local)', 'Advanced Model (Mistral)', 'Fast Model (Gemini)')
     )
     
     api_key = ""

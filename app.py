@@ -10,12 +10,14 @@ import faiss
 from gpt4all import GPT4All
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 # --- Model and Encoder Loading (Cached for performance) ---
 
 @st.cache_resource
 def load_llm_model():
-    """Loads the local GPT4All model."""
+    """Loads the 'Normal' local GPT4All model."""
     return GPT4All("orca-mini-3b-gguf2-q4_0.gguf")
 
 @st.cache_resource
@@ -23,8 +25,30 @@ def load_encoder_model():
     """Loads the sentence transformer model for embeddings."""
     return SentenceTransformer('all-MiniLM-L6-v2')
 
+@st.cache_resource
+def load_advanced_llm_model():
+    """Loads the 'Advanced' quantized DeepSeek model from Hugging Face."""
+    model_name = "deepseek-ai/DeepSeek-R1-0528"
+    
+    # Configure 4-bit quantization
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        torch_dtype=torch.float16 # Ensure compatibility
+    )
+    return model, tokenizer
+
+# Load all models at startup
 llm_model = load_llm_model()
 encoder_model = load_encoder_model()
+advanced_model, advanced_tokenizer = load_advanced_llm_model()
 
 
 # --- File Reading and Processing ---
@@ -85,24 +109,18 @@ def ask_query(query, model_type, api_key, chat_history):
     if 'faiss_index' not in st.session_state:
         return "Please upload and process a file first.", None
 
-    # RAG: Find relevant document chunks based on the latest query
     query_emb = encoder_model.encode([query])
     _, I = st.session_state.faiss_index.search(np.array(query_emb), k=3)
     relevant_chunks = [st.session_state.chunks[i] for i in I[0]]
     doc_context = "\n\n---\n\n".join(relevant_chunks)
 
-    # --- MEMORY IMPLEMENTATION ---
-    # Format the last few messages from chat history to provide conversation context.
-    # We take the last 4 messages (2 user, 2 assistant) to keep the prompt concise.
     history_str = ""
     recent_history = chat_history[-4:]
     if recent_history:
         history_str += "Here is the recent conversation history:\n"
         for msg in recent_history:
             history_str += f"{msg['role'].capitalize()}: {msg['content']}\n"
-    # --- END MEMORY IMPLEMENTATION ---
 
-    # Construct the final prompt with both conversation and document context
     prompt = f"""
 You are a helpful AI assistant. Answer the user's latest question based on the conversation history and the provided document context.
 
@@ -126,9 +144,19 @@ Answer:
             gen_model = genai.GenerativeModel("gemini-2.0-flash")
             response = gen_model.generate_content(prompt)
             return response.text, doc_context
+            
+        elif model_type == 'Advanced Model (DeepSeek)':
+            inputs = advanced_tokenizer(prompt, return_tensors="pt").to(advanced_model.device)
+            outputs = advanced_model.generate(**inputs, max_new_tokens=512, do_sample=True, temperature=0.7)
+            response_text = advanced_tokenizer.decode(outputs[0], skip_special_tokens=True)
+            # Remove the prompt from the response to get only the answer
+            answer = response_text[len(prompt):].strip()
+            return answer, doc_context
+
         else: # Normal Model (Local)
             response = llm_model.generate(prompt, max_tokens=512)
             return response, doc_context
+            
     except Exception as e:
         return f"An error occurred: {str(e)}", None
 
@@ -145,11 +173,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'all_chats' not in st.session_state:
-    st.session_state.all_chats = []
+if 'chat_history' not in st.session_state: st.session_state.chat_history = []
+if 'all_chats' not in st.session_state: st.session_state.all_chats = []
 
 
 # --- Sidebar Controls ---
@@ -171,7 +196,10 @@ with st.sidebar:
                 else:
                     st.error("Failed to read or process the file.")
 
-    model_choice = st.selectbox("Choose a model:", ('Normal Model (Local)', 'Fast Model (Gemini)'))
+    model_choice = st.selectbox(
+        "Choose a model:",
+        ('Normal Model (Local)', 'Advanced Model (DeepSeek)', 'Fast Model (Gemini)')
+    )
     
     api_key = ""
     if model_choice == 'Fast Model (Gemini)':
@@ -205,7 +233,6 @@ with st.sidebar:
 # --- Main Chat Interface ---
 st.title("💬 Chatbot")
 
-# Display current chat messages
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -213,20 +240,16 @@ for message in st.session_state.chat_history:
             with st.expander("Show Sources"):
                 st.markdown(f"> {message['context'].replace('---', '---')}")
 
-# User input
 if user_query := st.chat_input("Ask a question about your document..."):
     if not uploaded_file:
         st.warning("Please upload a document before asking questions.")
     else:
-        # Append user message to history immediately for a fluid UI
         st.session_state.chat_history.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
-        # Get the assistant's response
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                # Pass the current chat history to the model
+            with st.spinner("Thinking... (Advanced model may be slow on first run)"):
                 response, context = ask_query(
                     user_query, model_choice, api_key, st.session_state.chat_history
                 )
@@ -235,9 +258,9 @@ if user_query := st.chat_input("Ask a question about your document..."):
                     with st.expander("Show Sources"):
                          st.markdown(f"> {context.replace('---', '---')}")
                 
-                # Append the full assistant message with context to history
                 st.session_state.chat_history.append({
                     "role": "assistant", 
                     "content": response, 
                     "context": context
                 })
+

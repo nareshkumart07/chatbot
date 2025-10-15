@@ -8,34 +8,19 @@ import numpy as np
 import faiss
 from gpt4all import GPT4All
 from sentence_transformers import SentenceTransformer
-import google.generativeai as genai
+import google.generativai as genai
+# We import these here, but they will only be loaded on demand
 from transformers import BartForConditionalGeneration, BartTokenizer
+import torch
 
-# --- Model and Encoder Loading (Cached for performance) ---
+# --- Model Management (On-Demand Loading) ---
 
-@st.cache_resource
-def load_llm_model():
-    """Loads the 'Normal' local GPT4All model for general chat."""
-    return GPT4All("orca-mini-3b-gguf2-q4_0.gguf")
-
-@st.cache_resource
-def load_encoder_model():
-    """Loads the sentence transformer model for embeddings."""
-    return SentenceTransformer('all-MiniLM-L6-v2')
-
-@st.cache_resource
-def load_bart_model():
-    """Loads the true BART model and tokenizer for summarization."""
-    model_name = "facebook/bart-large-cnn"
-    tokenizer = BartTokenizer.from_pretrained(model_name)
-    model = BartForConditionalGeneration.from_pretrained(model_name)
-    return model, tokenizer
-
-# Load all models at startup
-llm_model = load_llm_model()
-encoder_model = load_encoder_model()
-bart_model, bart_tokenizer = load_bart_model()
-
+def load_and_cache_model(model_key, loader_func, *args):
+    """A generic function to load and cache models in Streamlit's session state."""
+    if model_key not in st.session_state:
+        with st.spinner(f"Loading {model_key}... This might take a moment."):
+            st.session_state[model_key] = loader_func(*args)
+    return st.session_state[model_key]
 
 # --- File Reading and Processing ---
 
@@ -58,24 +43,21 @@ def read_txt(file):
     return stringio.read()
 
 def get_file_content(uploaded_file):
-    """Reads the content of the uploaded file based on its extension."""
     if uploaded_file is not None:
         file_extension = os.path.splitext(uploaded_file.name)[1].lower()
-        if file_extension == ".docx": return read_docx(uploaded_file)
-        if file_extension == ".pdf": return read_pdf(uploaded_file)
-        if file_extension == ".csv": return read_csv(uploaded_file)
-        if file_extension == ".txt": return read_txt(uploaded_file)
+        read_funcs = {".docx": read_docx, ".pdf": read_pdf, ".csv": read_csv, ".txt": read_txt}
+        if file_extension in read_funcs:
+            return read_funcs[file_extension](uploaded_file)
         st.error("Unsupported file format.")
     return None
 
 # --- RAG Pipeline & Chat Logic ---
 
 def chunk_text(text, chunk_size=500, chunk_overlap=50):
-    """Splits text into overlapping chunks."""
     return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size - chunk_overlap)]
 
 def setup_rag_pipeline(text_content):
-    """Creates embeddings and a FAISS index for the document."""
+    encoder_model = load_and_cache_model('encoder_model', SentenceTransformer, 'all-MiniLM-L6-v2')
     chunks = chunk_text(text_content)
     if not chunks:
         st.warning("Could not extract text from the document.")
@@ -88,12 +70,10 @@ def setup_rag_pipeline(text_content):
     st.session_state.faiss_index = index
 
 def ask_query(query, model_type, api_key, chat_history):
-    """
-    Performs RAG to answer a query, using the selected model.
-    """
     if 'faiss_index' not in st.session_state:
         return "Please upload and process a file first.", None
 
+    encoder_model = st.session_state.encoder_model
     query_emb = encoder_model.encode([query])
     _, I = st.session_state.faiss_index.search(np.array(query_emb), k=3)
     relevant_chunks = [st.session_state.chunks[i] for i in I[0]]
@@ -107,17 +87,12 @@ def ask_query(query, model_type, api_key, chat_history):
             history_str += f"{msg['role'].capitalize()}: {msg['content']}\n"
 
     prompt = f"""
-You are a helpful AI assistant. Answer the user's latest question based on the conversation history and the provided document context.
-
+You are a helpful AI assistant. Answer the user's question based on the conversation history and the document context.
 {history_str}
-
-Use the following context from the document if it's relevant. If the answer isn't in the document or history, say you don't know.
-
 Document Context:
 ---
 {doc_context}
 ---
-
 User's Latest Question: {query}
 Answer:
 """
@@ -131,24 +106,31 @@ Answer:
             return response.text, doc_context
             
         elif model_type == 'Advanced Model (BART)':
-            # BART is a summarization model, so we use it to summarize the context
-            # It doesn't use the conversational prompt.
-            inputs = bart_tokenizer([doc_context], max_length=1024, return_tensors='pt', truncation=True)
-            summary_ids = bart_model.generate(inputs['input_ids'], num_beams=4, max_length=150, early_stopping=True)
+            bart_tokenizer = load_and_cache_model('bart_tokenizer', BartTokenizer.from_pretrained, "facebook/bart-large-cnn")
+            bart_model = load_and_cache_model('bart_model', BartForConditionalGeneration.from_pretrained, "facebook/bart-large-cnn")
+            
+            # Create a more focused input for BART
+            input_text = f"Based on the following document context, answer the question: '{query}'\n\nContext:\n{doc_context}"
+            inputs = bart_tokenizer(input_text, max_length=1024, return_tensors='pt', truncation=True)
+            
+            # **FIX:** Pass the entire 'inputs' dictionary to the generate method
+            summary_ids = bart_model.generate(**inputs, num_beams=4, max_length=200, min_length=40, early_stopping=True)
             summary = bart_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-            # Add a clear heading to the summary
-            response = f"**Summary from Document Context:**\n\n{summary}"
+            
+            response = f"**Answer generated by BART:**\n\n{summary}"
             return response, doc_context
 
         else: # Normal Model (Local)
+            llm_model = load_and_cache_model('llm_model', GPT4All, "orca-mini-3b-gguf2-q4_0.gguf")
             response = llm_model.generate(prompt, max_tokens=512)
             return response, doc_context
             
     except Exception as e:
-        error_message = f"An error occurred while communicating with the model API: {str(e)}"
-        st.error(error_message)
-        return error_message, None
-
+        st.error(f"An error occurred: {str(e)}")
+        # Check for common CUDA errors if torch is involved
+        if "CUDA" in str(e):
+            st.error("CUDA Error: Please ensure you have a compatible NVIDIA GPU and properly configured PyTorch with CUDA support, or use a CPU-only environment.")
+        return f"An error occurred while generating the response.", None
 
 # --- Streamlit App UI ---
 st.set_page_config(page_title="Chat with your Data", page_icon="💬", layout="wide")
@@ -165,18 +147,17 @@ st.markdown("""
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'all_chats' not in st.session_state: st.session_state.all_chats = []
 
-
 # --- Sidebar Controls ---
 with st.sidebar:
     st.title("📄 Chat Controls")
     
     uploaded_file = st.file_uploader("Upload your data file", type=["docx", "pdf", "csv", "txt"])
     
-    st.info("Note: The chatbot's knowledge is limited to the content of the uploaded document.", icon="💡")
-
+    st.info("Note: The chatbot's knowledge is limited to the uploaded document.", icon="💡")
+    
     if uploaded_file:
         if "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
-            with st.spinner('Reading and indexing file...'):
+            with st.spinner('Reading and indexing your file...'):
                 file_content = get_file_content(uploaded_file)
                 if file_content:
                     setup_rag_pipeline(file_content)
@@ -187,28 +168,29 @@ with st.sidebar:
 
     model_choice = st.selectbox(
         "Choose a model:",
-        ('Normal Model (Local)', 'Fast Model (Gemini)', 'Advanced Model (BART)')
+        ('Normal Model (Local)', 'Fast Model (Gemini)', 'Advanced Model (BART)'),
+        help="Models will be downloaded the first time you select them."
     )
     
     api_key = ""
     if model_choice == 'Fast Model (Gemini)':
         api_key = st.text_input("Enter Google AI API Key", type="password")
         st.markdown("For using the faster model you need to paste your Gemini API key here.")
+    
+    st.warning("Be patient: The 'Local' and 'BART' models can take a few minutes to download the first time you use them.", icon="⏳")
 
     st.markdown("---")
     
     col1, col2 = st.columns(2)
-    with col1:
-        if st.button("New Chat", use_container_width=True):
-            if st.session_state.chat_history:
-                st.session_state.all_chats.append(st.session_state.chat_history)
-            st.session_state.chat_history = []
-            st.rerun()
+    if col1.button("New Chat", use_container_width=True):
+        if st.session_state.chat_history:
+            st.session_state.all_chats.append(st.session_state.chat_history)
+        st.session_state.chat_history = []
+        st.rerun()
 
-    with col2:
-        if st.button("Clear Chat", use_container_width=True):
-            st.session_state.chat_history = []
-            st.rerun()
+    if col2.button("Clear Chat", use_container_width=True):
+        st.session_state.chat_history = []
+        st.rerun()
             
     if st.session_state.all_chats:
         st.markdown("---")
@@ -217,7 +199,6 @@ with st.sidebar:
             preview = chat[0]['content'] if chat and chat[0]['role'] == 'user' else "Empty Chat"
             if st.button(f"Chat {i+1}: {preview[:30]}...", key=f"history_{i}"):
                 st.session_state.chat_history = chat
-
 
 # --- Main Chat Interface ---
 st.title("💬 Chatbot")
@@ -238,16 +219,14 @@ if user_query := st.chat_input("Ask a question about your document..."):
             st.markdown(user_query)
 
         with st.chat_message("assistant"):
+            # The spinner is now inside the model loading function, 
+            # so we just need a general one here.
             with st.spinner("Thinking..."):
                 response, context = ask_query(
                     user_query, model_choice, api_key, st.session_state.chat_history
                 )
                 if response:
                     st.markdown(response)
-                    if context:
-                        with st.expander("Show Sources"):
-                             st.markdown(f"> {context.replace('---', '---')}")
-                    
                     st.session_state.chat_history.append({
                         "role": "assistant", 
                         "content": response, 

@@ -85,7 +85,7 @@ def ask_query(query):
         bart_model = load_and_cache_model('bart_model', BartForConditionalGeneration.from_pretrained, "facebook/bart-large-cnn")
         
         # Create a focused input for BART
-        input_text = f"Based on the following document context, answer the question: '{query}'\n\nContext:\n{doc_context}"
+        input_text = f"answer the question: '{query}'\n\nContext:\n{doc_context}"
         inputs = bart_tokenizer(input_text, max_length=1024, return_tensors='pt', truncation=True)
         
         # Generate the answer

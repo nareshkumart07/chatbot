@@ -1,5 +1,5 @@
 import streamlit as st
-from chat_bot import get_file_content, setup_rag_pipeline, ask_query
+from chatbot_logic import get_file_content, setup_rag_pipeline, ask_query
 
 # --- Streamlit App UI ---
 st.set_page_config(page_title="Chat with your Data", page_icon="💬", layout="wide")

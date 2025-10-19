@@ -4,8 +4,6 @@ pandas
 PyPDF2
 numpy
 faiss-cpu
-sentence-transformers
-transformers
-torch
 gpt4all
-google.generativeai
+sentence-transformers
+google-generativeai

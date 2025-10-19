@@ -9,6 +9,7 @@ import faiss
 from gpt4all import GPT4All
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
+from transformers import BartTokenizer, BartForConditionalGeneration
 
 # --- Model and Encoder Loading (Cached for performance) ---
 
@@ -22,9 +23,17 @@ def load_encoder_model():
     """Loads the sentence transformer model for embeddings."""
     return SentenceTransformer('all-MiniLM-L6-v2')
 
+@st.cache_resource
+def load_bart_model():
+    """Loads the BART model and tokenizer from Hugging Face."""
+    tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
+    model = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
+    return tokenizer, model
+
 # Load models at startup
 llm_model = load_llm_model()
 encoder_model = load_encoder_model()
+bart_tokenizer, bart_model = load_bart_model()
 
 
 # --- File Reading and Processing ---
@@ -79,7 +88,7 @@ def setup_rag_pipeline(text_content):
 
 def ask_query(query, model_type, api_key, chat_history):
     """
-    Performs RAG to answer a query, now including conversation history for context.
+    Performs RAG to answer a query using the selected model and conversation history.
     Returns the response and the document context used.
     """
     if 'faiss_index' not in st.session_state:
@@ -120,6 +129,12 @@ Answer:
             gen_model = genai.GenerativeModel("gemini-pro")
             response = gen_model.generate_content(prompt)
             return response.text, doc_context
+
+        elif model_type == 'BART':
+            inputs = bart_tokenizer(prompt, return_tensors='pt', max_length=1024, truncation=True)
+            summary_ids = bart_model.generate(inputs['input_ids'], num_beams=4, max_length=256, early_stopping=True)
+            response = bart_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+            return response, doc_context
 
         else: # Normal Model (Local)
             response = llm_model.generate(prompt, max_tokens=512)

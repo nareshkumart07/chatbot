@@ -8,3 +8,4 @@ sentence-transformers
 transformers
 torch
 gpt4all
+google.generativeai

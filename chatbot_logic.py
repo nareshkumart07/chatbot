@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 from docx import Document
 import pandas as pd
 import PyPDF2
@@ -31,12 +30,10 @@ encoder_model = load_encoder_model()
 # --- File Reading and Processing ---
 
 def read_docx(file):
-    """Reads text from a .docx file."""
     doc = Document(file)
     return "\n".join([para.text for para in doc.paragraphs])
 
 def read_pdf(file):
-    """Reads text from a .pdf file."""
     pdf_reader = PyPDF2.PdfReader(file)
     text = ""
     for page in pdf_reader.pages:
@@ -44,19 +41,14 @@ def read_pdf(file):
     return text
 
 def read_csv(file):
-    """Reads content from a .csv file and converts it to a string."""
     return pd.read_csv(file).to_string()
 
 def read_txt(file):
-    """Reads text from a .txt file."""
     stringio = StringIO(file.getvalue().decode("utf-8"))
     return stringio.read()
 
 def get_file_content(uploaded_file):
-    """
-    Reads the content of the uploaded file based on its extension.
-    Returns the file content as a string or None if the format is unsupported.
-    """
+    """Reads the content of the uploaded file based on its extension."""
     if uploaded_file is not None:
         file_extension = os.path.splitext(uploaded_file.name)[1].lower()
         if file_extension == ".docx": return read_docx(uploaded_file)
@@ -69,47 +61,37 @@ def get_file_content(uploaded_file):
 # --- RAG Pipeline & Chat Logic ---
 
 def chunk_text(text, chunk_size=500, chunk_overlap=50):
-    """Splits text into overlapping chunks for better context handling."""
-    if not text:
-        return []
+    """Splits text into overlapping chunks."""
     return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size - chunk_overlap)]
 
 def setup_rag_pipeline(text_content):
-    """
-    Creates text embeddings and a FAISS index for the document.
-    Stores the chunks and index in the Streamlit session state.
-    """
+    """Creates embeddings and a FAISS index for the document."""
     chunks = chunk_text(text_content)
     if not chunks:
-        st.warning("Could not extract any text from the document to process.")
+        st.warning("Could not extract text from the document.")
         return
         
     embeddings = encoder_model.encode(chunks)
     index = faiss.IndexFlatL2(embeddings.shape[1])
-    index.add(np.array(embeddings).astype('float32'))
+    index.add(np.array(embeddings))
     st.session_state.chunks = chunks
     st.session_state.faiss_index = index
 
 def ask_query(query, model_type, api_key, chat_history):
     """
-    Performs Retrieval-Augmented Generation (RAG) to answer a user's query.
-    It retrieves relevant document chunks, considers conversation history,
-    and then generates a response using the selected language model.
-    
+    Performs RAG to answer a query, now including conversation history for context.
     Returns the response and the document context used.
     """
-    if 'faiss_index' not in st.session_state or 'chunks' not in st.session_state:
+    if 'faiss_index' not in st.session_state:
         return "Please upload and process a file first.", None
 
-    # 1. Retrieve relevant document chunks
     query_emb = encoder_model.encode([query])
-    _, I = st.session_state.faiss_index.search(np.array(query_emb).astype('float32'), k=3)
+    _, I = st.session_state.faiss_index.search(np.array(query_emb), k=3)
     relevant_chunks = [st.session_state.chunks[i] for i in I[0]]
     doc_context = "\n\n---\n\n".join(relevant_chunks)
 
-    # 2. Construct prompt with conversation history and context
     history_str = ""
-    recent_history = chat_history[-4:] # Use last 4 messages for context
+    recent_history = chat_history[-4:]
     if recent_history:
         history_str += "Here is the recent conversation history:\n"
         for msg in recent_history:
@@ -130,11 +112,10 @@ Document Context:
 User's Latest Question: {query}
 Answer:
 """
-    # 3. Generate response using the chosen model
     try:
         if model_type == 'Fast Model (Gemini)':
             if not api_key:
-                return "Error: Please enter your Google AI API key to use the Gemini model.", None
+                return "Error: Please enter your Google AI API key.", None
             genai.configure(api_key=api_key)
             gen_model = genai.GenerativeModel("gemini-pro")
             response = gen_model.generate_content(prompt)
@@ -148,3 +129,4 @@ Answer:
         error_message = f"An error occurred while communicating with the model API: {str(e)}"
         st.error(error_message)
         return error_message, None
+

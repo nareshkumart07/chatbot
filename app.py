@@ -1,7 +1,7 @@
 import streamlit as st
 from chat_bot import get_file_content, setup_rag_pipeline, ask_query
 
-# --- Streamlit App UI Configuration ---
+# --- Streamlit App UI ---
 st.set_page_config(page_title="Chat with your Data", page_icon="💬", layout="wide")
 
 st.markdown("""
@@ -13,11 +13,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Session State Initialization ---
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'all_chats' not in st.session_state:
-    st.session_state.all_chats = []
+if 'chat_history' not in st.session_state: st.session_state.chat_history = []
+if 'all_chats' not in st.session_state: st.session_state.all_chats = []
 
 
 # --- Sidebar Controls ---
@@ -28,16 +25,13 @@ with st.sidebar:
     
     st.info("Note: The chatbot's knowledge is limited to the content of the uploaded document.", icon="💡")
 
-    # Process file on upload
     if uploaded_file:
         if "processed_file" not in st.session_state or st.session_state.processed_file != uploaded_file.name:
-            with st.spinner('Reading and indexing your file... This may take a moment.'):
+            with st.spinner('Reading and indexing file...'):
                 file_content = get_file_content(uploaded_file)
                 if file_content:
                     setup_rag_pipeline(file_content)
                     st.session_state.processed_file = uploaded_file.name
-                    st.session_state.chat_history = [] # Clear history for new file
-                    st.session_state.all_chats = [] # Clear all history for new file
                     st.success("File processed successfully!")
                 else:
                     st.error("Failed to read or process the file.")
@@ -49,7 +43,7 @@ with st.sidebar:
     
     api_key = ""
     if model_choice == 'Fast Model (Gemini)':
-        api_key = st.text_input("Enter Google AI API Key", type="password", help="You can get your key from Google AI Studio.")
+        api_key = st.text_input("Enter Google AI API Key", type="password")
         st.markdown("For using the faster model you need to paste your Gemini API key here.")
 
     st.markdown("---")
@@ -67,32 +61,25 @@ with st.sidebar:
             st.session_state.chat_history = []
             st.rerun()
             
-    # Display past chat sessions for selection
     if st.session_state.all_chats:
         st.markdown("---")
         st.subheader("Chat History")
         for i, chat in enumerate(st.session_state.all_chats):
             preview = chat[0]['content'] if chat and chat[0]['role'] == 'user' else "Empty Chat"
-            if st.button(f"Chat {i+1}: {preview[:30]}...", key=f"history_{i}", use_container_width=True):
+            if st.button(f"Chat {i+1}: {preview[:30]}...", key=f"history_{i}"):
                 st.session_state.chat_history = chat
-                st.rerun()
 
 
 # --- Main Chat Interface ---
 st.title("💬 Chatbot")
-st.write("Upload a document and start asking questions!")
 
-# Display current chat messages
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        # Show sources only for assistant messages that have them
         if message["role"] == "assistant" and message.get("context"):
             with st.expander("Show Sources"):
-                # Format context for better readability
                 st.markdown(f"> {message['context'].replace('---', '---')}")
 
-# Handle new user input
 if user_query := st.chat_input("Ask a question about your document..."):
     if not uploaded_file:
         st.warning("Please upload a document before asking questions.")
@@ -110,11 +97,11 @@ if user_query := st.chat_input("Ask a question about your document..."):
                     st.markdown(response)
                     if context:
                         with st.expander("Show Sources"):
-                             st.markdown(f"> {context.replace('---', '---')}")
+                            st.markdown(f"> {context.replace('---', '---')}")
                     
-                    # Append the full response to history
                     st.session_state.chat_history.append({
                         "role": "assistant", 
                         "content": response, 
                         "context": context
                     })
+

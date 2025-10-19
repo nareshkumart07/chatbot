@@ -7,3 +7,6 @@ faiss-cpu
 gpt4all
 sentence-transformers
 google-generativeai
+transformers
+torch
+sentencepiece

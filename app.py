@@ -38,7 +38,7 @@ with st.sidebar:
 
     model_choice = st.selectbox(
         "Choose a model:",
-        ('Normal Model (Local)', 'Fast Model (Gemini)')
+        ('Normal Model (Local)', 'Fast Model (Gemini)', 'BART')
     )
     
     api_key = ""

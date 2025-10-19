@@ -7,5 +7,4 @@ faiss-cpu
 sentence-transformers
 transformers
 torch
-sacremoses
-sentencepiece
+gpt4all

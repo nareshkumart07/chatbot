@@ -131,7 +131,7 @@ Answer:
             return response.text, doc_context
 
         elif model_type == 'BART':
-            inputs = bart_tokenizer(prompt, return_tensors='pt', max_length=1024, truncation=True)
+            inputs = bart_tokenizer(prompt, return_tensors='pt', max_length=10000, truncation=True)
             summary_ids = bart_model.generate(inputs['input_ids'], num_beams=4, max_length=256, early_stopping=True)
             response = bart_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
             return response, doc_context

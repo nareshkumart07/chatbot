@@ -126,7 +126,7 @@ Answer:
             if not api_key:
                 return "Error: Please enter your Google AI API key.", None
             genai.configure(api_key=api_key)
-            gen_model = genai.GenerativeModel("gemini-pro")
+            gen_model = genai.GenerativeModel("gemini-2.5-flash")
             response = gen_model.generate_content(prompt)
             return response.text, doc_context
 

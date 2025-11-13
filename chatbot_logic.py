@@ -1,105 +1,147 @@
 import streamlit as st
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import torch
+from docx import Document
+import pandas as pd
+import PyPDF2
+from io import StringIO
+import os
+import numpy as np
+import faiss
+from gpt4all import GPT4All
+from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
+from transformers import BartTokenizer, BartForConditionalGeneration
 
-# -----------------------------------------------------------
-# 🔧 Load Flan-T5-Small Model (Locally)
-# -----------------------------------------------------------
-# As you requested, we are using AutoModelForSeq2SeqLM
-model_id = "google/flan-t5-small"
+# --- Model and Encoder Loading (Cached for performance) ---
 
-@st.cache_resource(show_spinner="Loading chatbot model...")
-def load_model():
-    """
-    Loads the Flan-T5-Small model and tokenizer locally.
-    """
-    # Use the specific classes you requested
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        model_id,
-        device_map="auto",
-        torch_dtype=torch.float16,
-    )
+@st.cache_resource
+def load_llm_model():
+    """Loads the 'Normal' local GPT4All model."""
+    return GPT4All("orca-mini-3b-gguf2-q4_0.gguf")
+
+@st.cache_resource
+def load_encoder_model():
+    """Loads the sentence transformer model for embeddings."""
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+@st.cache_resource
+def load_bart_model():
+    """Loads the BART model and tokenizer from Hugging Face."""
+    tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
+    model = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
     return tokenizer, model
 
-# Load the model and tokenizer
-tokenizer, model = load_model()
+# Load models at startup
+llm_model = load_llm_model()
+encoder_model = load_encoder_model()
+bart_tokenizer, bart_model = load_bart_model()
 
-# -----------------------------------------------------------
-# 🧠 Generate Response Function (Local)
-# -----------------------------------------------------------
-def generate_response(prompt):
+
+# --- File Reading and Processing ---
+
+def read_docx(file):
+    doc = Document(file)
+    return "\n".join([para.text for para in doc.paragraphs])
+
+def read_pdf(file):
+    pdf_reader = PyPDF2.PdfReader(file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text() or ""
+    return text
+
+def read_csv(file):
+    return pd.read_csv(file).to_string()
+
+def read_txt(file):
+    stringio = StringIO(file.getvalue().decode("utf-8"))
+    return stringio.read()
+
+def get_file_content(uploaded_file):
+    """Reads the content of the uploaded file based on its extension."""
+    if uploaded_file is not None:
+        file_extension = os.path.splitext(uploaded_file.name)[1].lower()
+        if file_extension == ".docx": return read_docx(uploaded_file)
+        if file_extension == ".pdf": return read_pdf(uploaded_file)
+        if file_extension == ".csv": return read_csv(uploaded_file)
+        if file_extension == ".txt": return read_txt(uploaded_file)
+        st.error("Unsupported file format.")
+    return None
+
+# --- RAG Pipeline & Chat Logic ---
+
+def chunk_text(text, chunk_size=500, chunk_overlap=50):
+    """Splits text into overlapping chunks."""
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size - chunk_overlap)]
+
+def setup_rag_pipeline(text_content):
+    """Creates embeddings and a FAISS index for the document."""
+    chunks = chunk_text(text_content)
+    if not chunks:
+        st.warning("Could not extract text from the document.")
+        return
+        
+    embeddings = encoder_model.encode(chunks)
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(np.array(embeddings))
+    st.session_state.chunks = chunks
+    st.session_state.faiss_index = index
+
+def ask_query(query, model_type, api_key, chat_history):
     """
-    Generates a response from the local model given a user prompt.
+    Performs RAG to answer a query using the selected model and conversation history.
+    Returns the response and the document context used.
     """
+    if 'faiss_index' not in st.session_state:
+        return "Please upload and process a file first.", None
+
+    query_emb = encoder_model.encode([query])
+    _, I = st.session_state.faiss_index.search(np.array(query_emb), k=3)
+    relevant_chunks = [st.session_state.chunks[i] for i in I[0]]
+    doc_context = "\n\n---\n\n".join(relevant_chunks)
+
+    history_str = ""
+    recent_history = chat_history[-4:]
+    if recent_history:
+        history_str += "Here is the recent conversation history:\n"
+        for msg in recent_history:
+            history_str += f"{msg['role'].capitalize()}: {msg['content']}\n"
+
+    prompt = f"""
+You are a helpful AI assistant. Answer the user's latest question based on the conversation history and the provided document context.
+
+{history_str}
+
+Use the following context from the document if it's relevant. If the answer isn't in the document or history, say you don't know.
+
+Document Context:
+---
+{doc_context}
+---
+
+User's Latest Question: {query}
+Answer:
+"""
     try:
-        # Tokenize the input prompt
-        inputs = tokenizer(
-            prompt, 
-            return_tensors="pt", 
-            padding=True,
-            truncation=True,
-            max_length=512
-        ).to(model.device)
+        if model_type == 'Fast Model (Gemini)':
+            if not api_key:
+                return "Error: Please enter your Google AI API key.", None
+            genai.configure(api_key=api_key)
+            gen_model = genai.GenerativeModel("gemini-2.5-flash")
+            response = gen_model.generate_content(prompt)
+            return response.text, doc_context
 
-        # Generate the response
-        with torch.inference_mode():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=512,  # Increase token limit for chat
-                num_beams=5,
-                do_sample=True,      # Enable sampling for more varied chat responses
-                temperature=0.9,
-                top_p=0.95,
-            )
-        
-        # Decode the generated tokens
-        response_text = tokenizer.batch_decode(
-            outputs, 
-            skip_special_tokens=True
-        )[0]
-        
-        return response_text
+        elif model_type == 'BART':
+            inputs = bart_tokenizer(prompt, return_tensors='pt', max_length=10000, truncation=True)
+            summary_ids = bart_model.generate(inputs['input_ids'], num_beams=4, max_length=256, early_stopping=True)
+            response = bart_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+            return response, doc_context
 
+        else: # Normal Model (Local)
+            response = llm_model.generate(prompt, max_tokens=512)
+            return response, doc_context
+            
     except Exception as e:
-        st.error(f"Error during generation: {e}")
-        return "Sorry, an error occurred while generating a response."
+        error_message = f"An error occurred while communicating with the model API: {str(e)}"
+        st.error(error_message)
+        return error_message, None
 
-# -----------------------------------------------------------
-# 🎨 Streamlit UI (Chatbot App)
-# -----------------------------------------------------------
-st.set_page_config(page_title="Flan-T5 Chatbot", page_icon="🤖", layout="centered")
-st.title("🤖 Flan-T5 Chatbot (Local Model)")
-st.write("Ask me anything! I'm a chatbot powered by a locally-loaded Flan-T5 model.")
-
-# --- Initialize Chat History ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! How can I help you today?"}
-    ]
-
-# --- Display Chat History ---
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# --- Chat Input ---
-if prompt := st.chat_input("What is on your mind?"):
-    # 1. Add user message to history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # 2. Display user message
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # 3. Generate and display assistant response
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = generate_response(prompt)
-            st.markdown(response)
-    
-    # 4. Add assistant response to history
-    st.session_state.messages.append({"role": "assistant", "content": response})
-
-# Footer
-st.caption("Powered by Google's Flan-T5-Small (Local).")

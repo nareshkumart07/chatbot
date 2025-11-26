@@ -13,6 +13,7 @@ from transformers import BartTokenizer, BartForConditionalGeneration
 
 # --- Model and Encoder Loading (Cached for performance) ---
 
+
 @st.cache_resource
 def load_llm_model():
     """Loads the 'Normal' local GPT4All model."""

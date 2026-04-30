@@ -4,6 +4,7 @@ from chatbot_logic import get_file_content, setup_rag_pipeline, ask_query
 # --- Streamlit App UI ---
 st.set_page_config(page_title="Chat with your Data", page_icon="📄", layout="wide")
 
+
 # Custom CSS for a cleaner look
 st.markdown("""
 <style>
@@ -135,4 +136,6 @@ if user_query := st.chat_input("Ask a question about your document..."):
                         "content": response, 
                         "context": context
                     })
+
+
 

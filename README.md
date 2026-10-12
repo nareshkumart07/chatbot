@@ -1,15 +1,14 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/Python-3.8%2B-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+<img src="https://img.shields.io/badge/Python-3-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python">
 <img src="https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Streamlit">
 <img src="https://img.shields.io/badge/FAISS-Vector%20Store-009688?style=for-the-badge" alt="FAISS">
-<img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 
 <br/><br/>
 
 <h1>💬 Chat with Your Data</h1>
 
-<p><strong>An interactive Streamlit application to converse with your documents using multiple powerful LLMs and a RAG pipeline.</strong></p>
+<p><strong>A Streamlit document Q&amp;A demonstration with FAISS retrieval and a choice of local or API-based text generation.</strong></p>
 
 <p>
   <a href="#-features">Features</a> •
@@ -31,7 +30,7 @@
   </tr>
   <tr>
     <td>🤖 <strong>Triple LLM Support</strong></td>
-    <td>Choose from three different language models depending on your speed, privacy, and accuracy needs.</td>
+    <td>Choose GPT4All, the Gemini API, or BART. See the processing locations and setup requirements below.</td>
   </tr>
   <tr>
     <td>🔍 <strong>RAG Pipeline</strong></td>
@@ -39,11 +38,11 @@
   </tr>
   <tr>
     <td>💬 <strong>Interactive Chat UI</strong></td>
-    <td>Clean chat interface to ask questions and receive instant answers from your documents.</td>
+    <td>Ask questions and inspect the retrieved document context alongside generated answers.</td>
   </tr>
   <tr>
     <td>🗂️ <strong>Chat Management</strong></td>
-    <td>New chat, clear chat, and persistent chat history — all from the sidebar.</td>
+    <td>New chat and clear chat controls, with conversation state held in the current Streamlit session. History is not saved to a database or file.</td>
   </tr>
 </table>
 
@@ -56,8 +55,7 @@
     <tr>
       <th>Model</th>
       <th>Type</th>
-      <th>Speed</th>
-      <th>Privacy</th>
+      <th>Processing location</th>
       <th>Requirements</th>
     </tr>
   </thead>
@@ -65,26 +63,25 @@
     <tr>
       <td>🏠 <strong>Normal Model (Local)</strong></td>
       <td>GPT4All (<code>orca-mini-3b</code>)</td>
-      <td>🐢 Slower</td>
-      <td>🔒 Full Privacy</td>
-      <td>None — runs on-device</td>
+      <td>Machine hosting Streamlit</td>
+      <td>Download of <code>orca-mini-3b-gguf2-q4_0.gguf</code>; sufficient local memory and disk</td>
     </tr>
     <tr>
       <td>⚡ <strong>Fast Model (Gemini)</strong></td>
       <td>Google Gemini API</td>
-      <td>🚀 Fast</td>
-      <td>☁️ Cloud</td>
-      <td>Google AI API Key</td>
+      <td>Google's Gemini API</td>
+      <td>Google AI API key, network access, and access to <code>gemini-2.5-flash</code></td>
     </tr>
     <tr>
       <td>🧠 <strong>BART</strong></td>
       <td>Hugging Face Transformer</td>
-      <td>⚡ Medium</td>
-      <td>🔒 Local</td>
-      <td>None — runs on-device</td>
+      <td>Machine hosting Streamlit</td>
+      <td>Download of <code>facebook/bart-large-cnn</code>; sufficient local memory and disk</td>
     </tr>
   </tbody>
 </table>
+
+The UI labels “Normal” and “Fast” identify model options; response speed and answer quality have not been benchmarked in this repository. Embeddings use `all-MiniLM-L6-v2` on the machine hosting Streamlit. Selecting Gemini sends the question, retrieved document text, and recent conversation history to Google's API. Local generation does not make a remotely hosted Streamlit deployment equivalent to processing on your own computer.
 
 ---
 
@@ -104,16 +101,19 @@
 
 ### Prerequisites
 
-- Python **3.8** or higher
-- `pip` package manager
+- Python 3.11 and the `pip` package manager. Python 3.11 matches the image configured in `.devcontainer/devcontainer.json`.
+- Internet access for installing dependencies and downloading model files on the first launch.
+- Sufficient memory and disk space for GPT4All, the embedding model, and BART. All three are loaded at startup, even when you intend to use only Gemini.
+
+Dependencies are currently unpinned, and the repository does not provide a lockfile or compatibility test results. The commands below match the repository layout; a clean-environment installation and runtime validation are still needed.
 
 ---
 
 ### 1. Clone the Repository
 
 ```bash
-git clone <your-repository-url>
-cd <your-project-folder>
+git clone https://github.com/nareshkumart07/chatbot.git
+cd chatbot
 ```
 
 ---
@@ -150,20 +150,21 @@ source venv/bin/activate
 ### 3. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-> **Note:** The first time you run the app, the local GPT4All model (`orca-mini-3b-gguf2-q4_0.gguf`) will be downloaded automatically. This is a **one-time process**.
+> **First launch:** `chatbot_logic.py` initializes GPT4All (`orca-mini-3b-gguf2-q4_0.gguf`), Sentence-Transformers (`all-MiniLM-L6-v2`), and BART (`facebook/bart-large-cnn`) during import. Missing model files may be downloaded and cached by their libraries. Startup therefore requires network access until the models are cached and can take time before the UI becomes available. Model download or initialization failures can prevent the app from starting.
 
 ---
 
 ### 4. Run the Application
 
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
-Your browser will automatically open a new tab with the app running at `http://localhost:8501`.
+Open the local URL printed by Streamlit, normally `http://localhost:8501`.
 
 ---
 
@@ -209,12 +210,22 @@ Follow these steps after launching the app:
 ## 📂 Project Structure
 
 ```
-📦 your-project-folder
+📦 chatbot
 ├── app.py               # Main Streamlit application
-├── chat_bot.py          # LLM logic and RAG pipeline
+├── chatbot_logic.py     # File readers, model loading, retrieval, and generation
 ├── requirements.txt     # Python dependencies
 └── README.md            # Project documentation
 ```
+
+---
+
+## Implementation and Current Limits
+
+- Text is split into 500-character chunks with a 50-character overlap. `all-MiniLM-L6-v2` creates embeddings, and a FAISS `IndexFlatL2` retrieves three chunks for each question.
+- The document chunks, vector index, and chat history live in Streamlit session state. This implementation does not persist them across new sessions.
+- PDF extraction reads existing text with `PyPDF2`; scanned PDFs need OCR before upload. TXT files must be UTF-8 encoded, and CSV files are converted to text for retrieval.
+- “Show Sources” displays retrieved text, rather than page-level citations. Generated answers still need checking against the document.
+- The repository does not currently include an automated test suite, benchmark results, or a deployment guide. It is a learning and portfolio demonstration, with runtime and model-quality validation still needed.
 
 ---
 
@@ -232,7 +243,7 @@ Contributions are welcome! Feel free to open an issue or submit a pull request.
 
 ## 📄 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+No `LICENSE` file is currently included in this repository.
 
 ---
 
